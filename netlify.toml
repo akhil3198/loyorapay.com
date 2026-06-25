@@ -1,0 +1,56 @@
+# ============================================================
+# LoyaltyPay — Netlify Deploy Config
+# Deploy: drag the /claude folder into netlify.com/drop
+# OR connect GitHub repo and set publish directory to "."
+# ============================================================
+
+[build]
+  publish = "."
+  command = ""          # Static site — no build step needed
+
+# ── Redirect all routes to the single HTML file ──────────────
+[[redirects]]
+  from   = "/*"
+  to     = "/a3-loyalty-warm.html"
+  status = 200
+
+# ── Security headers ─────────────────────────────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options           = "DENY"
+    X-Content-Type-Options    = "nosniff"
+    X-XSS-Protection          = "1; mode=block"
+    Referrer-Policy           = "strict-origin-when-cross-origin"
+    Permissions-Policy        = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy   = """
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' 'unsafe-eval'
+        https://cdn.jsdelivr.net
+        https://cdnjs.cloudflare.com;
+      style-src 'self' 'unsafe-inline'
+        https://fonts.googleapis.com;
+      font-src 'self'
+        https://fonts.gstatic.com;
+      connect-src 'self'
+        https://*.supabase.co
+        https://api.anthropic.com;
+      img-src 'self' data: blob:;
+      frame-ancestors 'none';
+    """
+
+# ── Cache: HTML never cached, assets long-cached ─────────────
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/backend/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# ── Environment variables (set in Netlify dashboard) ─────────
+# SUPABASE_URL        = https://YOUR_PROJECT_ID.supabase.co
+# SUPABASE_ANON_KEY   = your-anon-key
+# (These are public-safe — Supabase RLS enforces security)

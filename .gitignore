@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.local
+
+# Editor
+.vscode/
+.idea/
+
+# Netlify
+.netlify/
+
+# Logs
+*.log
+
+# Backup files
+*.BACKUP-*.html
+*-backup-*.html
+loyaltypay.html
+*.skill
