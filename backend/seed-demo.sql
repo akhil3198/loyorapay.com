@@ -62,7 +62,7 @@ ON CONFLICT (hotel_id) DO UPDATE SET point_value = EXCLUDED.point_value;
 INSERT INTO guests (
   id, hotel_id, membership_id, name, email, phone,
   nationality, tier_idx, points_balance, lifetime_spend,
-  total_stays, last_stay, member_since, churn_status, language
+  total_stays, last_stay_date, enrolled_at, churn_status, language
 ) VALUES
 -- Mirage (Platinum equivalent) — 8 guests
 ('10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','DP-000101','Ahmed Al-Rashid','ahmed.alrashid@email.ae','+971501111001','AE',3,62400,185000,24,'2025-10-15','2022-01-10','active','ar'),

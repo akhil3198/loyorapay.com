@@ -1,15 +1,14 @@
 // ============================================================
-// LoyaltyPay — Supabase Client + Auth + Data Layer
+// LoyoraPay — Supabase Client + Auth + Data Layer  v2
 //
-// DROP THIS FILE into the HTML as a <script> tag BEFORE the
-// main app script. It replaces localStorage with real API calls.
-//
-// Setup:
-//   1. npm install @supabase/supabase-js
-//   OR include via CDN:
-//   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-//
-// Replace the two constants below with your project values.
+// Fixes applied (vs v1):
+//  - getRole()/getHotelId() query users table directly — JWT
+//    claims not guaranteed on first session after signUp
+//  - DB.getHotel() uses hotel_id from profile, not .single() blindly
+//  - DB.getEarnConfig() maps JSONB fields to flat state keys
+//  - bootFromDB() maps correct DB column names to state fields
+//  - inviteStaff() delegates to invite-staff edge function
+//  - all hotel_id filters use _cachedProfile (not JWT claims)
 // ============================================================
 
 const SUPABASE_URL  = 'https://togjwxlzieqysyrdbcil.supabase.co';
@@ -17,8 +16,20 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// Cached session — set on signIn, used by getRole/getHotelId synchronously
+// Cached state — set on every signIn / signUp / getSession
 let _cachedSession = null;
+let _cachedProfile = null;   // { id, hotel_id, name, email, role } from users table
+
+// ── Internal: load user profile from DB ──────────────────────
+async function _loadProfile(userId) {
+  const { data } = await _sb
+    .from('users')
+    .select('id, hotel_id, name, email, role')
+    .eq('id', userId)
+    .single();
+  _cachedProfile = data || null;
+  return _cachedProfile;
+}
 
 // ─────────────────────────────────────────────────────────────
 // AUTH
@@ -29,18 +40,19 @@ const Auth = {
     const { data, error } = await _sb.auth.signInWithPassword({ email, password });
     if (error) throw error;
     _cachedSession = data.session;
+    await _loadProfile(data.user.id);   // always query DB — don't trust JWT claims alone
     return data;
   },
 
   async signUp({ email, password, hotelName, hotelType }) {
-    // 1. Create auth user
+    // 1. Create Supabase auth user
     const { data: authData, error: authErr } = await _sb.auth.signUp({ email, password });
     if (authErr) throw authErr;
 
     const userId = authData.user.id;
     _cachedSession = authData.session;
 
-    // 2. Create hotel row (bypass RLS using service role not needed — anon can insert)
+    // 2. Create hotel row — INSERT policy in 004-schema-fixes.sql allows this
     const { data: hotel, error: hotelErr } = await _sb
       .from('hotels')
       .insert({ name: hotelName, property_type: hotelType })
@@ -48,20 +60,30 @@ const Auth = {
       .single();
     if (hotelErr) throw hotelErr;
 
-    // 3. Create user profile
+    // 3. Create user profile row
     const { error: userErr } = await _sb
       .from('users')
-      .insert({ id: userId, hotel_id: hotel.id, name: email.split('@')[0], email, role: 'owner' });
+      .insert({
+        id:       userId,
+        hotel_id: hotel.id,
+        name:     email.split('@')[0],
+        email,
+        role:     'owner',
+      });
     if (userErr) throw userErr;
 
-    // 4. Seed default tiers / earn / redemption config
+    // 4. Seed default tier / earn / redemption config
     await _sb.rpc('seed_hotel_defaults', { p_hotel_id: hotel.id });
+
+    // 5. Cache profile immediately so getHotelId()/getRole() work
+    _cachedProfile = { id: userId, hotel_id: hotel.id, name: email.split('@')[0], email, role: 'owner' };
 
     return { user: authData.user, hotel };
   },
 
   async signOut() {
     _cachedSession = null;
+    _cachedProfile = null;
     await _sb.auth.signOut();
     window.location.reload();
   },
@@ -69,56 +91,76 @@ const Auth = {
   async getSession() {
     const { data } = await _sb.auth.getSession();
     _cachedSession = data.session;
+    if (data.session?.user?.id && !_cachedProfile) {
+      await _loadProfile(data.session.user.id);
+    }
     return data.session;
   },
 
+  // Always reads from DB profile — not JWT claims
   getHotelId() {
-    return _cachedSession?.user?.app_metadata?.hotel_id || null;
+    return _cachedProfile?.hotel_id || null;
   },
 
   getRole() {
-    return _cachedSession?.user?.app_metadata?.role || 'owner';
+    return _cachedProfile?.role || 'owner';
   },
 
   async resetPassword(email) {
     const { error } = await _sb.auth.resetPasswordForEmail(email, {
-      redirectTo: 'https://loyorapay.com'
+      redirectTo: 'https://loyorapay.com',
     });
     if (error) throw error;
   },
 
   onAuthChange(callback) {
-    _sb.auth.onAuthStateChange((event, session) => {
+    _sb.auth.onAuthStateChange(async (event, session) => {
       _cachedSession = session;
+      if (session?.user?.id) {
+        await _loadProfile(session.user.id);
+      } else {
+        _cachedProfile = null;
+      }
       callback(event, session);
     });
-  }
+  },
 };
 
 // ─────────────────────────────────────────────────────────────
-// DATA LAYER  (replaces persistState / loadPersistedState)
-// All functions are async — call with await or .then()
+// DATA LAYER
 // ─────────────────────────────────────────────────────────────
 const DB = {
 
-  // ── Hotel ──────────────────────────────────────────────────
+  // ── Hotel ─────────────────────────────────────────────────
   async getHotel() {
-    const { data, error } = await _sb.from('hotels').select('*').single();
+    const hotelId = Auth.getHotelId();
+    if (!hotelId) return null;
+    const { data, error } = await _sb
+      .from('hotels')
+      .select('*')
+      .eq('id', hotelId)
+      .single();
     if (error) throw error;
     return data;
   },
 
   async updateHotel(fields) {
-    const { error } = await _sb.from('hotels').update(fields).eq('id', Auth.getHotelId());
+    const { error } = await _sb
+      .from('hotels')
+      .update(fields)
+      .eq('id', Auth.getHotelId());
     if (error) throw error;
   },
 
-  // ── Guests ─────────────────────────────────────────────────
+  // ── Guests ────────────────────────────────────────────────
   async getGuests({ search, tierIdx, churnStatus, limit = 500, offset = 0 } = {}) {
-    let q = _sb.from('guests').select('*').order('lifetime_spend', { ascending: false });
-    if (search)      q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%,membership_id.ilike.%${search}%`);
+    let q = _sb
+      .from('guests')
+      .select('*')
+      .order('lifetime_spend', { ascending: false });
+    if (search)                q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%,membership_id.ilike.%${search}%`);
     if (tierIdx !== undefined) q = q.eq('tier_idx', tierIdx);
-    if (churnStatus) q = q.eq('churn_status', churnStatus);
+    if (churnStatus)           q = q.eq('churn_status', churnStatus.toLowerCase());
     q = q.range(offset, offset + limit - 1);
     const { data, error } = await q;
     if (error) throw error;
@@ -132,28 +174,34 @@ const DB = {
   },
 
   async upsertGuest(guest) {
-    const { data, error } = await _sb.from('guests').upsert(guest).select().single();
+    const { data, error } = await _sb
+      .from('guests')
+      .upsert(guest)
+      .select()
+      .single();
     if (error) throw error;
     return data;
   },
 
   async bulkUpsertGuests(guests) {
-    // Used by Data Upload screen
-    const { data, error } = await _sb.from('guests').upsert(guests, { onConflict: 'membership_id' });
+    const { data, error } = await _sb
+      .from('guests')
+      .upsert(guests, { onConflict: 'membership_id' });
     if (error) throw error;
     return data;
   },
 
-  // ── Points transactions ────────────────────────────────────
+  // ── Points transactions ───────────────────────────────────
   async addTransaction(tx) {
-    // tx: { guest_id, type, points, description, earn_category, rate_code, ref_code, expiry_date }
+    const hotelId = Auth.getHotelId();
+    if (!hotelId) throw new Error('Not authenticated');
     const { data, error } = await _sb
       .from('points_transactions')
-      .insert({ ...tx, hotel_id: Auth.getHotelId() })
+      .insert({ ...tx, hotel_id: hotelId })
       .select()
       .single();
     if (error) throw error;
-    return data;  // balance auto-updated by DB trigger
+    return data;
   },
 
   async getTransactions(guestId, limit = 50) {
@@ -167,40 +215,44 @@ const DB = {
     return data;
   },
 
-  // Earn points for a stay (called after check-out sync from PMS)
   async earnPoints({ guestId, points, category, rateCode, description }) {
-    const expiryDate = new Date();
-    expiryDate.setMonth(expiryDate.getMonth() + 18);  // 18-month default
+    const expiry = new Date();
+    expiry.setMonth(expiry.getMonth() + 18);
     return DB.addTransaction({
-      guest_id: guestId, type: 'earn', points,
-      earn_category: category, rate_code: rateCode,
-      description, expiry_date: expiryDate.toISOString().split('T')[0]
+      guest_id:      guestId,
+      type:          'earn',
+      points,
+      earn_category: category,
+      rate_code:     rateCode,
+      description,
+      expiry_date:   expiry.toISOString().split('T')[0],
     });
   },
 
-  // ── Redemptions ────────────────────────────────────────────
+  // ── Redemptions ───────────────────────────────────────────
   async createRedemption(redemption) {
+    const hotelId = Auth.getHotelId();
     const { data, error } = await _sb
       .from('redemptions')
-      .insert({ ...redemption, hotel_id: Auth.getHotelId() })
+      .insert({ ...redemption, hotel_id: hotelId })
       .select()
       .single();
     if (error) throw error;
 
-    // Deduct points
     await DB.addTransaction({
-      guest_id: redemption.guest_id,
-      type: 'redeem',
-      points: -(redemption.points_used),
+      guest_id:    redemption.guest_id,
+      type:        'redeem',
+      points:      -(Math.abs(redemption.points_used)),
       description: redemption.reward_name,
-      ref_code: redemption.ref_code
+      ref_code:    redemption.ref_code,
     });
 
     return data;
   },
 
   async getRedemptions({ status, limit = 100 } = {}) {
-    let q = _sb.from('redemptions')
+    let q = _sb
+      .from('redemptions')
       .select('*, guests(name, tier_idx)')
       .order('created_at', { ascending: false })
       .limit(limit);
@@ -218,7 +270,7 @@ const DB = {
     if (error) throw error;
   },
 
-  // ── Campaigns ──────────────────────────────────────────────
+  // ── Campaigns ─────────────────────────────────────────────
   async getCampaigns(status) {
     let q = _sb.from('campaigns').select('*').order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
@@ -228,18 +280,29 @@ const DB = {
   },
 
   async upsertCampaign(campaign) {
+    const hotelId = Auth.getHotelId();
+    // Normalise: message_body → message (schema column)
+    const row = {
+      ...campaign,
+      hotel_id:     hotelId,
+      message:      campaign.message_body || campaign.message,
+      message_body: campaign.message_body || campaign.message,
+    };
     const { data, error } = await _sb
       .from('campaigns')
-      .upsert({ ...campaign, hotel_id: Auth.getHotelId() })
+      .upsert(row)
       .select()
       .single();
     if (error) throw error;
     return data;
   },
 
-  // ── Templates ──────────────────────────────────────────────
+  // ── Templates ─────────────────────────────────────────────
   async getTemplates() {
-    const { data, error } = await _sb.from('templates').select('*').order('send_count', { ascending: false });
+    const { data, error } = await _sb
+      .from('templates')
+      .select('*')
+      .order('send_count', { ascending: false });
     if (error) throw error;
     return data;
   },
@@ -254,23 +317,62 @@ const DB = {
     return data;
   },
 
-  // ── Earn config ────────────────────────────────────────────
+  // ── Earn config ───────────────────────────────────────────
+  // Schema stores earn rates as JSONB (base_rates) AND flat columns
+  // This returns both so callers can use either
   async getEarnConfig() {
-    const { data, error } = await _sb.from('earn_config').select('*').single();
+    const hotelId = Auth.getHotelId();
+    if (!hotelId) return null;
+    const { data, error } = await _sb
+      .from('earn_config')
+      .select('*')
+      .eq('hotel_id', hotelId)
+      .single();
     if (error && error.code !== 'PGRST116') throw error;
     return data;
   },
 
-  async updateEarnConfig(fields) {
-    const { error } = await _sb
-      .from('earn_config')
-      .upsert({ ...fields, hotel_id: Auth.getHotelId(), updated_at: new Date() });
+  // Accepts flat state keys — maps to correct DB columns
+  async updateEarnConfig(stateFields) {
+    const hotelId = Auth.getHotelId();
+    if (!hotelId) return;
+
+    // Map state keys → DB columns
+    const row = {
+      hotel_id:               hotelId,
+      updated_at:             new Date(),
+      // JSONB fields
+      base_rates:             stateFields.earnSegments      || undefined,
+      behavior_bonuses:       stateFields.behaviorBonuses   || undefined,
+      group_multipliers:      stateFields.groupMultipliers  || undefined,
+      dynamic_rate:           stateFields.dynamicRate       || undefined,
+      earn_cal:               stateFields.earnCal           || undefined,
+      earn_matrix:            stateFields.earnMatrix        || undefined,
+      rate_suppress:          stateFields.rateSuppress      || undefined,
+      tier_multipliers:       stateFields.tierMultipliers   || undefined,
+      // Flat columns (from migration 004)
+      base_rate_room:         stateFields.base_rate_room    || undefined,
+      base_rate_fnb:          stateFields.base_rate_fnb     || undefined,
+      base_rate_spa:          stateFields.base_rate_spa     || undefined,
+      suppressed_rate_codes:  stateFields.suppressed_rate_codes || undefined,
+    };
+
+    // Remove undefined keys
+    Object.keys(row).forEach(k => row[k] === undefined && delete row[k]);
+
+    const { error } = await _sb.from('earn_config').upsert(row);
     if (error) throw error;
   },
 
-  // ── Redemption config ──────────────────────────────────────
+  // ── Redemption config ─────────────────────────────────────
   async getRedemptionConfig() {
-    const { data, error } = await _sb.from('redemption_config').select('*').single();
+    const hotelId = Auth.getHotelId();
+    if (!hotelId) return null;
+    const { data, error } = await _sb
+      .from('redemption_config')
+      .select('*')
+      .eq('hotel_id', hotelId)
+      .single();
     if (error && error.code !== 'PGRST116') throw error;
     return data;
   },
@@ -282,9 +384,15 @@ const DB = {
     if (error) throw error;
   },
 
-  // ── Tier config ────────────────────────────────────────────
+  // ── Tier config ───────────────────────────────────────────
   async getTierConfig() {
-    const { data, error } = await _sb.from('tier_config').select('*').single();
+    const hotelId = Auth.getHotelId();
+    if (!hotelId) return null;
+    const { data, error } = await _sb
+      .from('tier_config')
+      .select('*')
+      .eq('hotel_id', hotelId)
+      .single();
     if (error && error.code !== 'PGRST116') throw error;
     return data;
   },
@@ -296,99 +404,126 @@ const DB = {
     if (error) throw error;
   },
 
-  // ── Staff ──────────────────────────────────────────────────
+  // ── Staff ─────────────────────────────────────────────────
   async getStaff() {
-    const { data, error } = await _sb.from('users').select('id, name, email, role, created_at');
+    const { data, error } = await _sb
+      .from('users')
+      .select('id, name, email, role, created_at');
     if (error) throw error;
     return data;
   },
 
+  // Calls invite-staff edge function (needs service role — can't call auth.admin from anon)
   async inviteStaff({ name, email, role }) {
-    // Supabase invite sends email with magic link
-    const { data, error } = await _sb.auth.admin.inviteUserByEmail(email, {
-      data: { name, role }
+    const session = _cachedSession;
+    if (!session) throw new Error('Not authenticated');
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-staff`, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, email, role }),
     });
-    if (error) throw error;
-    return data;
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Invite failed');
+    }
+    return res.json();
   },
 
   async removeStaff(userId) {
     const { error } = await _sb.from('users').delete().eq('id', userId);
     if (error) throw error;
-  }
+  },
+
+  // ── Campaign send ─────────────────────────────────────────
+  async sendCampaign(campaignId, dryRun = false) {
+    const session = _cachedSession;
+    if (!session) throw new Error('Not authenticated');
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-campaign`, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ campaign_id: campaignId, dry_run: dryRun }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Send failed');
+    }
+    return res.json();
+  },
 };
 
 // ─────────────────────────────────────────────────────────────
-// INTEGRATION HOOKS  (wire into existing app functions)
-//
-// In the HTML, find these functions and replace/extend:
-//
-// 1. persistState()  →  await DB.updateEarnConfig(...)  etc.
-//    (each section saves its own table instead of one blob)
-//
-// 2. loadPersistedState()  →  load from DB on boot
-//    const hotel    = await DB.getHotel();
-//    const guests   = await DB.getGuests();
-//    const config   = await DB.getEarnConfig();
-//    ... merge into state object
-//
-// 3. login() / logout()  →  Auth.signIn() / Auth.signOut()
-//
-// 4. The onboarding "New Property" form  →  Auth.signUp()
+// BOOT HELPER
 // ─────────────────────────────────────────────────────────────
-
-// Boot helper: call this at app start instead of loadPersistedState()
 async function bootFromDB() {
   const session = await Auth.getSession();
   if (!session) {
-    // Not logged in — show login screen
     go('login');
     return;
   }
 
   try {
-    // Load everything in parallel
-    const [hotel, guests, earnCfg, redemCfg, tierCfg, templates, campaigns] = await Promise.all([
+    const [hotel, guests, earnCfg, redemCfg, tierCfg] = await Promise.all([
       DB.getHotel(),
       DB.getGuests(),
       DB.getEarnConfig(),
       DB.getRedemptionConfig(),
       DB.getTierConfig(),
-      DB.getTemplates(),
-      DB.getCampaigns()
     ]);
 
-    // Merge into existing state object
     if (hotel) {
-      state.hotel         = { ...state.hotel, ...hotel };
-      state.programName   = hotel.program_name;
-      state.plan          = hotel.plan;
+      state.hotel       = { ...(state.hotel || {}), ...hotel };
+      state.programName = hotel.program_name || state.programName;
+      state.plan        = hotel.plan         || state.plan;
     }
-    if (guests)    state.guests        = guests;
-    if (tierCfg)   state.tierConfig    = tierCfg.tiers;
-    if (earnCfg)   Object.assign(state, earnCfg);
+
+    if (guests && guests.length) {
+      state.guests = guests;
+    }
+
+    if (tierCfg?.tiers) {
+      state.tierConfig = tierCfg.tiers;
+    }
+
+    if (earnCfg) {
+      // Map JSONB fields → state keys
+      if (earnCfg.base_rates)        state.earnSegments     = earnCfg.base_rates;
+      if (earnCfg.behavior_bonuses)  state.behaviorBonuses  = earnCfg.behavior_bonuses;
+      if (earnCfg.group_multipliers) state.groupMultipliers = earnCfg.group_multipliers;
+      if (earnCfg.dynamic_rate)      state.dynamicRate      = earnCfg.dynamic_rate;
+      if (earnCfg.earn_cal)          state.earnCal          = earnCfg.earn_cal;
+      if (earnCfg.earn_matrix)       state.earnMatrix       = earnCfg.earn_matrix;
+      if (earnCfg.rate_suppress)     state.rateSuppress     = earnCfg.rate_suppress;
+    }
+
     if (redemCfg) {
       state.redemption = {
-        ...state.redemption,
-        pointValue:       redemCfg.point_value,
-        minRedeem:        redemCfg.min_redeem,
-        maxPct:           redemCfg.max_pct,
-        expiryMonths:     redemCfg.expiry_months,
-        expiryWarningDays: redemCfg.expiry_warn_days
+        ...(state.redemption || {}),
+        pointValue:        redemCfg.point_value,
+        minRedeem:         redemCfg.min_redeem,
+        maxPct:            redemCfg.max_pct,
+        expiryMonths:      redemCfg.expiry_months,
+        expiryWarningDays: redemCfg.expiry_warn_days,
       };
     }
 
-    // Set role from JWT
     state.role = Auth.getRole();
 
-    boot();  // existing app boot function
+    boot();
   } catch (err) {
-    console.error('bootFromDB failed:', err);
-    // Fall back to localStorage demo mode
+    console.error('bootFromDB failed — falling back to localStorage:', err);
     loadPersistedState();
     boot();
   }
 }
 
-// Export for use in HTML
 window.LP = { Auth, DB, bootFromDB };
