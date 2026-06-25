@@ -12157,6 +12157,19 @@ function init(){
   if(saEl)saEl.style.display='none';
   if(goEl)goEl.style.display='none';
   loadPersistedState();
+
+  // Restore existing Supabase session — skip login if already authenticated
+  if(window.LP && window.LP.Auth){
+    LP.Auth.getSession().then(function(session){
+      if(!session) return; // not logged in — login screen stays visible
+      state.role = LP.Auth.getRole() || 'owner';
+      document.getElementById('screen-login').classList.add('hidden');
+      document.getElementById('app').style.display='block';
+      try{ ADV.loggedIn=true; ADV.msgs=[]; }catch(e){}
+      setTimeout(function(){ if(window.ppaInit) ppaInit(); }, 600);
+      boot();
+    }).catch(function(e){ console.error('Session restore failed:', e); });
+  }
 }
 
 init();
