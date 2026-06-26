@@ -2361,7 +2361,7 @@ function doLogin(){
     if(_aMeta) _aMeta.textContent='';
     setTimeout(()=>{ if(window.ppaInit) ppaInit(); },600);
     document.getElementById('app').style.display='block';
-    boot();
+    if(window.LP && window.LP.bootFromDB){ LP.bootFromDB(); } else { boot(); }
   };
 
   if(!window.LP||!window.LP.Auth){ toast('Auth service not loaded. Please refresh.'); resetBtn(); return; }
@@ -4098,9 +4098,13 @@ window.awardPoints=function(id){
   const amt=+document.getElementById('awAmount').value||0;
   const reason=document.getElementById('awReason').value;
   g.pointsBalance+=amt;
-  g.timeline.unshift({date:new Date(),type:'Manual',segment:'Manual award — '+reason,amount:0,points:amt});
+  g.timeline&&g.timeline.unshift({date:new Date(),type:'Manual',segment:'Manual award — '+reason,amount:0,points:amt});
   g.lastStayDays=0;g.ges=calcGES(g);g.churn=churnFromGES(g.ges);
   persistState();closeModal();openGuestProfile(id);toast(`Awarded ${fmtNum(amt)} points to ${g.name}`);
+  // Persist to DB
+  if(window.LP&&LP.DB&&g.id&&!g.id.startsWith('g')){
+    LP.DB.earnPoints({guestId:g.id,points:amt,category:'manual',description:'Manual award — '+reason}).catch(e=>console.warn('DB earn sync:',e));
+  }
 };
 window.openRedeemModal=function(id){
   const g=state.guests.find(x=>x.id===id);
@@ -4117,8 +4121,13 @@ window.redeemPoints=function(id){
   if(amt>g.pointsBalance){toast('Not enough points — capped to balance');amt=g.pointsBalance;}
   const reason=document.getElementById('rdReason').value;
   g.pointsBalance-=amt;
-  g.timeline.unshift({date:new Date(),type:'Redeem',segment:'Redeemed — '+reason,amount:0,points:-amt});
+  g.timeline&&g.timeline.unshift({date:new Date(),type:'Redeem',segment:'Redeemed — '+reason,amount:0,points:-amt});
   persistState();closeModal();openGuestProfile(id);toast(`Redeemed ${fmtNum(amt)} points for ${g.name}`);
+  // Persist to DB
+  if(window.LP&&LP.DB&&g.id&&!g.id.startsWith('g')){
+    const ref='LP-'+Math.random().toString(36).substr(2,6).toUpperCase();
+    LP.DB.createRedemption({guest_id:g.id,points_used:amt,reward_name:reason,ref_code:ref,status:'approved',method:'agent'}).catch(e=>console.warn('DB redeem sync:',e));
+  }
 };
 
 
@@ -4131,7 +4140,7 @@ RENDERERS.earnrules=function(){
     <div style="display:flex;gap:8px;">
       <button class="btn" onclick="go('earnopt')">Earn Optimiser →</button>
       <button class="btn" onclick="go('earncal')">Earn Calendar →</button>
-      <button class="btn btn-primary" onclick="persistState();toast('Earn rules saved')">Save changes</button>
+      <button class="btn btn-primary" onclick="persistState();if(window.LP&&LP.DB){LP.DB.updateEarnConfig({earnSegments:state.earnSegments,behaviorBonuses:state.behaviorBonuses,groupMultipliers:state.groupMultipliers,rateSuppress:state.rateSuppress}).catch(e=>console.warn('DB earn sync:',e));}toast('Earn rules saved')">Save changes</button>
     </div></div>
 
   <div class="card" style="margin-bottom:16px;">
@@ -5449,6 +5458,19 @@ window.redemConfirm=function(needsPin){
   if(g){g.pointsBalance=Math.max(0,g.pointsBalance+_redemBonusPts-ptsUsed);}
   _redemStep=4;
   persistState();
+  // Persist to DB
+  if(window.LP&&LP.DB&&_redemGuest.id&&!String(_redemGuest.id).startsWith('g')){
+    LP.DB.createRedemption({
+      guest_id:_redemGuest.id,
+      points_used:ptsUsed,
+      reward_name:newRecord.item,
+      ref_code:_redemRef,
+      status:'approved',
+      method:'agent',
+      airline_code:_redemAirline?_redemAirline.code:null,
+      ffn:_redemFFN||null,
+    }).catch(e=>console.warn('DB redemption sync:',e));
+  }
   go('redemption');
 };
 window.redemMgrApprove=function(id){
@@ -6994,7 +7016,7 @@ function renderSettTab(){
           <select onchange="state.hotel.currency=this.value">${['USD','AED','GBP','EUR','THB','SAR','QAR','KWD','SGD','MYR','AUD'].map(c=>`<option ${c===h.currency?'selected':''}>${c}</option>`).join('')}</select></div>
         <div class="field-wrap"><label class="field">Guest language</label><input type="text" value="${esc(h.language)}" onchange="state.hotel.language=this.value"></div>
       </div>
-      <button class="btn btn-primary" onclick="persistState();toast('Hotel profile saved')">Save profile</button>
+      <button class="btn btn-primary" onclick="persistState();if(window.LP&&LP.DB){LP.DB.updateHotel({name:state.hotel.name,city:state.hotel.city,country:state.hotel.country,star_rating:state.hotel.starRating,property_type:state.hotel.propertyType,rooms:state.hotel.rooms,currency:state.hotel.currency,language:state.hotel.language}).catch(e=>console.warn('DB hotel sync:',e));}toast('Hotel profile saved')">Save profile</button>
     </div>`;
   if(settTab==='notif'){const n=state.notifSettings;return `
     <div class="card" style="max-width:480px;">
@@ -12167,7 +12189,7 @@ function init(){
       document.getElementById('app').style.display='block';
       try{ ADV.loggedIn=true; ADV.msgs=[]; }catch(e){}
       setTimeout(function(){ if(window.ppaInit) ppaInit(); }, 600);
-      boot();
+      if(window.LP.bootFromDB){ LP.bootFromDB(); } else { boot(); }
     }).catch(function(e){ console.error('Session restore failed:', e); });
   }
 }

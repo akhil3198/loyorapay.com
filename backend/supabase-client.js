@@ -462,6 +462,60 @@ const DB = {
 };
 
 // ─────────────────────────────────────────────────────────────
+// DB → STATE MAPPERS
+// DB uses snake_case; HTML state uses camelCase
+// ─────────────────────────────────────────────────────────────
+function _mapChurnStatus(dbStatus) {
+  const map = { 'active': 'Active', 'at_risk': 'At Risk', 'churned': 'Churned' };
+  return map[(dbStatus || '').toLowerCase()] || 'Active';
+}
+
+function _mapDbGuest(g) {
+  const now = new Date();
+  const lastStayDate = g.last_stay_date ? new Date(g.last_stay_date) : null;
+  const lastStayDays = lastStayDate
+    ? Math.max(0, Math.round((now - lastStayDate) / (1000 * 60 * 60 * 24)))
+    : 999;
+
+  return {
+    // Keep all original DB fields (for writes back to DB)
+    ...g,
+    // camelCase aliases the HTML UI reads
+    pointsBalance:  g.points_balance  || 0,
+    tierIdx:        g.tier_idx        || 0,
+    lastStayDays:   lastStayDays,
+    membershipId:   g.membership_id   || '',
+    churn:          _mapChurnStatus(g.churn_status),
+    lifetimeSpend:  g.lifetime_spend  || 0,
+    totalStays:     g.total_stays     || 0,
+    ges:            g.ges             || 50,
+    // Hotel mapping
+    name:           g.name            || 'Member',
+    email:          g.email           || '',
+    phone:          g.phone           || '',
+    nationality:    g.nationality     || '',
+  };
+}
+
+function _mapDbHotel(h) {
+  return {
+    ...h,
+    // camelCase aliases
+    name:         h.name          || '',
+    city:         h.city          || '',
+    country:      h.country       || '',
+    starRating:   h.star_rating   || 5,
+    propertyType: h.property_type || 'Hotel',
+    rooms:        h.rooms         || 150,
+    currency:     h.currency      || 'AED',
+    language:     h.language      || 'English',
+    revenue:      h.revenue       || 3200000,
+    programName:  h.program_name  || 'Rewards',
+    plan:         h.plan          || 'growth',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // BOOT HELPER
 // ─────────────────────────────────────────────────────────────
 async function bootFromDB() {
@@ -481,13 +535,14 @@ async function bootFromDB() {
     ]);
 
     if (hotel) {
-      state.hotel       = { ...(state.hotel || {}), ...hotel };
-      state.programName = hotel.program_name || state.programName;
-      state.plan        = hotel.plan         || state.plan;
+      const mapped = _mapDbHotel(hotel);
+      state.hotel       = { ...(state.hotel || {}), ...mapped };
+      state.programName = mapped.programName || state.programName;
+      state.plan        = mapped.plan        || state.plan;
     }
 
     if (guests && guests.length) {
-      state.guests = guests;
+      state.guests = guests.map(_mapDbGuest);
     }
 
     if (tierCfg?.tiers) {
@@ -526,4 +581,4 @@ async function bootFromDB() {
   }
 }
 
-window.LP = { Auth, DB, bootFromDB };
+window.LP = { Auth, DB, bootFromDB, mapDbGuest: _mapDbGuest };
