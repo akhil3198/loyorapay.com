@@ -20,6 +20,15 @@ npm-debug.log*
 # Logs
 *.log
 
+# Utility/migration scripts (contain secrets)
+run-migrations.py
+run-migrations.js
+package.json
+package-lock.json
+
+# Supabase temp
+supabase/.temp/
+
 # Backup files
 *.BACKUP-*.html
 *-backup-*.html
