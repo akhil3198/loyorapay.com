@@ -183,6 +183,14 @@ const DB = {
     return data;
   },
 
+  async updateGuest(id, fields) {
+    const { error } = await _sb
+      .from('guests')
+      .update(fields)
+      .eq('id', id);
+    if (error) throw error;
+  },
+
   async bulkUpsertGuests(guests) {
     const { data, error } = await _sb
       .from('guests')
@@ -489,11 +497,15 @@ function _mapDbGuest(g) {
     lifetimeSpend:  g.lifetime_spend  || 0,
     totalStays:     g.total_stays     || 0,
     ges:            g.ges             || 50,
-    // Hotel mapping
     name:           g.name            || 'Member',
     email:          g.email           || '',
     phone:          g.phone           || '',
     nationality:    g.nationality     || '',
+    // UI arrays — always initialised so no crash
+    timeline:       Array.isArray(g.timeline)  ? g.timeline  : [],
+    notes:          Array.isArray(g.notes)     ? g.notes     : [],
+    memberSince:    g.member_since ? new Date(g.member_since) : new Date(),
+    experienceMode: g.experience_mode || 'Relaxation',
   };
 }
 
@@ -526,6 +538,10 @@ async function bootFromDB() {
   }
 
   try {
+    // Clear mock guests immediately — prevents 58 fake guests showing
+    // if user navigates before DB fetch completes
+    if (window.state) { window.state.guests = []; }
+
     const [hotel, guests, earnCfg, redemCfg, tierCfg] = await Promise.all([
       DB.getHotel(),
       DB.getGuests(),
@@ -575,8 +591,13 @@ async function bootFromDB() {
 
     boot();
   } catch (err) {
-    console.error('bootFromDB failed — falling back to localStorage:', err);
-    loadPersistedState();
+    console.error('bootFromDB failed:', err);
+    // Don't silently load mock data — show error to user
+    if (typeof toast === 'function') {
+      toast('Failed to load your hotel data. Please refresh or contact support.');
+    }
+    // Still attempt to render with whatever is in localStorage
+    // (will be empty for a fresh login, not mock data from genGuests)
     boot();
   }
 }

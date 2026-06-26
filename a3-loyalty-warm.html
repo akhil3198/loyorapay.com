@@ -1747,7 +1747,7 @@ function persistState(){
         tierIdx:g.tierIdx,pointsBalance:g.pointsBalance,lifetimeSpend:g.lifetimeSpend,
         totalStays:g.totalStays,lastStayDays:g.lastStayDays,ges:g.ges,churn:g.churn,
         experienceMode:g.experienceMode,memberSince:g.memberSince,notes:g.notes,
-        timeline:g.timeline.slice(0,20)
+        timeline:(g.timeline||[]).slice(0,20)
       };
     });
     localStorage.setItem(PERSIST_GUESTS_KEY,JSON.stringify(compactGuests));
@@ -2364,6 +2364,16 @@ function doLogin(){
     if(window.LP && window.LP.bootFromDB){ LP.bootFromDB(); } else { boot(); }
   };
 
+  // Demo bypass — any of these combos skips Supabase and loads demo data
+  const DEMO_ACCOUNTS={
+    'demo@loyorapay.com':'demo123',
+    'owner@harborviewresort.com':'demo123',
+    'admin@loyorapay.com':'admin123'
+  };
+  if(DEMO_ACCOUNTS[email]!==undefined && pass===DEMO_ACCOUNTS[email]){
+    resetBtn(); doPostLogin('owner'); return;
+  }
+
   if(!window.LP||!window.LP.Auth){ toast('Auth service not loaded. Please refresh.'); resetBtn(); return; }
   LP.Auth.signIn(email, pass).then(()=>{
     resetBtn();
@@ -2442,7 +2452,10 @@ function logoutAll(){
   document.getElementById('screen-login').classList.remove('hidden');
   try{ADV.loggedIn=false;ADV.msgs=[];ADV.open=false;document.getElementById('advisorPanel').classList.remove('open');}catch(e){}
 }
-function logout(){logoutAll();}
+function logout(){
+  if(window.LP&&LP.Auth&&LP.Auth.signOut){LP.Auth.signOut().catch(e=>console.warn('signOut:',e));}
+  else{logoutAll();}
+}
 
 /* ================= ONBOARDING ================= */
 const ONB_LABELS=['Hotel','Property','Services','Program','Upload'];
@@ -3568,7 +3581,7 @@ RENDERERS.dashboard=function(){
   const redRate30=totIss30>0?Math.round(totRed30/totIss30*100):0;
   const netPts30=totIss30-totRed30;
   const rateOk=redRate30>=30&&redRate30<=50;
-  const feed=state.guests.flatMap(g=>g.timeline.map(t=>({
+  const feed=state.guests.flatMap(g=>(g.timeline||[]).map(t=>({
     name:g.name,id:g.id,
     pts:t.type==='redemption'?-Math.abs(t.points):Math.abs(t.points),
     seg:t.segment,date:t.date
@@ -4054,7 +4067,7 @@ function renderGuestProfile(id){
         </div>
       </div>
       <div style="max-height:320px;overflow-y:auto;">
-        ${g.timeline.map(t=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;">
+        ${(g.timeline||[]).map(t=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;">
           <span>${fmtDate(t.date)} · ${esc(t.segment)}</span><span class="num">+${fmtNum(t.points)} pts</span></div>`).join('') || '<div class="muted">No activity yet.</div>'}
       </div>
     </div>
@@ -4102,8 +4115,9 @@ window.awardPoints=function(id){
   g.lastStayDays=0;g.ges=calcGES(g);g.churn=churnFromGES(g.ges);
   persistState();closeModal();openGuestProfile(id);toast(`Awarded ${fmtNum(amt)} points to ${g.name}`);
   // Persist to DB
-  if(window.LP&&LP.DB&&g.id&&!g.id.startsWith('g')){
+  if(window.LP&&LP.DB&&g.id&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(g.id)){
     LP.DB.earnPoints({guestId:g.id,points:amt,category:'manual',description:'Manual award — '+reason}).catch(e=>console.warn('DB earn sync:',e));
+    LP.DB.updateGuest(g.id,{points_balance:g.pointsBalance,ges:g.ges,churn_status:g.churn.toLowerCase().replace(' ','_')}).catch(e=>console.warn('DB guest sync:',e));
   }
 };
 window.openRedeemModal=function(id){
@@ -4124,9 +4138,10 @@ window.redeemPoints=function(id){
   g.timeline&&g.timeline.unshift({date:new Date(),type:'Redeem',segment:'Redeemed — '+reason,amount:0,points:-amt});
   persistState();closeModal();openGuestProfile(id);toast(`Redeemed ${fmtNum(amt)} points for ${g.name}`);
   // Persist to DB
-  if(window.LP&&LP.DB&&g.id&&!g.id.startsWith('g')){
+  if(window.LP&&LP.DB&&g.id&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(g.id)){
     const ref='LP-'+Math.random().toString(36).substr(2,6).toUpperCase();
     LP.DB.createRedemption({guest_id:g.id,points_used:amt,reward_name:reason,ref_code:ref,status:'approved',method:'agent'}).catch(e=>console.warn('DB redeem sync:',e));
+    LP.DB.updateGuest(g.id,{points_balance:g.pointsBalance}).catch(e=>console.warn('DB guest sync:',e));
   }
 };
 
@@ -5459,7 +5474,7 @@ window.redemConfirm=function(needsPin){
   _redemStep=4;
   persistState();
   // Persist to DB
-  if(window.LP&&LP.DB&&_redemGuest.id&&!String(_redemGuest.id).startsWith('g')){
+  if(window.LP&&LP.DB&&_redemGuest.id&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(_redemGuest.id))){
     LP.DB.createRedemption({
       guest_id:_redemGuest.id,
       points_used:ptsUsed,
