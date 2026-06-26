@@ -52,13 +52,14 @@ const Auth = {
     const userId = authData.user.id;
     _cachedSession = authData.session;
 
-    // 2. Create hotel row — INSERT policy in 004-schema-fixes.sql allows this
-    const { data: hotel, error: hotelErr } = await _sb
+    // 2. Create hotel row — generate ID client-side to avoid needing a SELECT back
+    // (RLS SELECT policy requires hotel_id in JWT which doesn't exist yet at signup)
+    const hotelId = crypto.randomUUID();
+    const { error: hotelErr } = await _sb
       .from('hotels')
-      .insert({ name: hotelName, property_type: hotelType })
-      .select()
-      .single();
+      .insert({ id: hotelId, name: hotelName, property_type: hotelType });
     if (hotelErr) throw hotelErr;
+    const hotel = { id: hotelId, name: hotelName, property_type: hotelType };
 
     // 3. Create user profile row
     const { error: userErr } = await _sb
