@@ -486,6 +486,24 @@ table.dtable{width:100%;border-collapse:collapse;font-size:13px;}
           <input type="password" id="loginPassword" placeholder="Enter your password">
         </div>
 
+        <div class="field-wrap">
+          <label class="field">Sign in as</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:4px;">
+            <label id="roleOptOwner" onclick="lpSelectRole('owner')" style="cursor:pointer;border:2px solid var(--mk-navy);border-radius:8px;padding:10px 6px;text-align:center;background:var(--mk-navy);transition:all .15s;">
+              <div style="font-size:18px;margin-bottom:2px;">🏨</div>
+              <div style="font-size:11px;font-weight:700;color:#fff;line-height:1.2;">General<br>Manager</div>
+            </label>
+            <label id="roleOptRevenue" onclick="lpSelectRole('revenue')" style="cursor:pointer;border:2px solid #e5e7eb;border-radius:8px;padding:10px 6px;text-align:center;background:#fff;transition:all .15s;">
+              <div style="font-size:18px;margin-bottom:2px;">📊</div>
+              <div style="font-size:11px;font-weight:700;color:#374151;line-height:1.2;">Revenue<br>Manager</div>
+            </label>
+            <label id="roleOptFrontdesk" onclick="lpSelectRole('frontdesk')" style="cursor:pointer;border:2px solid #e5e7eb;border-radius:8px;padding:10px 6px;text-align:center;background:#fff;transition:all .15s;">
+              <div style="font-size:18px;margin-bottom:2px;">🛎️</div>
+              <div style="font-size:11px;font-weight:700;color:#374151;line-height:1.2;">Front<br>Desk</div>
+            </label>
+          </div>
+          <input type="hidden" id="loginRole" value="owner">
+        </div>
 
         <button class="lp-btn-primary" onclick="doLogin()">
           Sign in
@@ -2310,6 +2328,18 @@ function currencyForCountry(country){
   });
 })();
 
+function lpSelectRole(role){
+  document.getElementById('loginRole').value=role;
+  const opts={owner:'roleOptOwner',revenue:'roleOptRevenue',frontdesk:'roleOptFrontdesk'};
+  Object.entries(opts).forEach(([r,id])=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    const active=r===role;
+    el.style.borderColor=active?'var(--mk-navy)':'#e5e7eb';
+    el.style.background=active?'var(--mk-navy)':'#fff';
+    el.querySelectorAll('div').forEach(d=>d.style.color=active?'#fff':'#374151');
+  });
+}
 function lpSwitchTab(tab){
   const isSignIn=tab==='signin';
   document.getElementById('tabSignIn').classList.toggle('active',isSignIn);
@@ -2372,7 +2402,8 @@ function doLogin(){
   };
   if(DEMO_ACCOUNTS[email]!==undefined && pass===DEMO_ACCOUNTS[email]){
     resetBtn();
-    state.role='owner';
+    const selectedRole=document.getElementById('loginRole')?document.getElementById('loginRole').value:'owner';
+    state.role=selectedRole||'owner';
     document.getElementById('screen-login').classList.add('hidden');
     ADV.loggedIn=true; ADV.msgs=[];
     const _aMeta=document.getElementById('advisorMeta');
