@@ -2371,7 +2371,16 @@ function doLogin(){
     'admin@loyorapay.com':'admin123'
   };
   if(DEMO_ACCOUNTS[email]!==undefined && pass===DEMO_ACCOUNTS[email]){
-    resetBtn(); doPostLogin('owner'); return;
+    resetBtn();
+    state.role='owner';
+    document.getElementById('screen-login').classList.add('hidden');
+    ADV.loggedIn=true; ADV.msgs=[];
+    const _aMeta=document.getElementById('advisorMeta');
+    if(_aMeta) _aMeta.textContent='';
+    setTimeout(()=>{ if(window.ppaInit) ppaInit(); },600);
+    document.getElementById('app').style.display='block';
+    boot(); // demo: skip bootFromDB, go straight to dashboard with mock data
+    return;
   }
 
   if(!window.LP||!window.LP.Auth){ toast('Auth service not loaded. Please refresh.'); resetBtn(); return; }
