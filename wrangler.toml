@@ -1,11 +1,13 @@
 name = "loyorapay-prod"
 compatibility_date = "2026-06-28"
 
-[[custom_domains]]
+[[routes]]
 pattern = "loyorapay.com"
+custom_domain = true
 
-[[custom_domains]]
+[[routes]]
 pattern = "www.loyorapay.com"
+custom_domain = true
 
 [assets]
 directory = "."
