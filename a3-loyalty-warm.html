@@ -464,14 +464,12 @@ table.dtable{width:100%;border-collapse:collapse;font-size:13px;}
           <label class="field">Email address</label>
           <input type="email" id="loginEmail" value="owner@harborviewresort.com" placeholder="you@yourhotel.com">
         </div>
-        <div class="field-wrap">
+        <div class="field-wrap" style="position:relative;">
           <label class="field">Password</label>
-          <div style="position:relative;">
-            <input type="password" id="loginPassword" placeholder="Enter your password" style="padding-right:40px;width:100%;box-sizing:border-box;">
-            <button type="button" onclick="lpTogglePassword('loginPassword',this)" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:0;color:#6b7280;z-index:10;" title="Show/hide password">
-              <svg id="eyeIcon_loginPassword" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-          </div>
+          <input type="password" id="loginPassword" placeholder="Enter your password" style="padding-right:44px;width:100%;box-sizing:border-box;">
+          <button type="button" onclick="lpTogglePassword('loginPassword',this)" style="position:absolute;right:10px;bottom:9px;background:none;border:none;cursor:pointer;padding:4px;color:#9ca3af;z-index:20;line-height:0;" title="Show/hide password">
+            <svg id="eyeIcon_loginPassword" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
         </div>
 
         <div class="field-wrap">
