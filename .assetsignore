@@ -1,0 +1,14 @@
+.git
+node_modules
+backend
+supabase
+*.backup*
+*.BACKUP*
+deploy.sh
+run-migrations.js
+run-migrations.py
+package.json
+package-lock.json
+netlify.toml
+*.skill
+lp-logo.png
