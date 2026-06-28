@@ -1,10 +1,11 @@
 name = "loyorapay-prod"
 compatibility_date = "2026-06-28"
 
-routes = [
-  { pattern = "loyorapay.com/*", zone_name = "loyorapay.com" },
-  { pattern = "www.loyorapay.com/*", zone_name = "loyorapay.com" }
-]
+[[custom_domains]]
+pattern = "loyorapay.com"
+
+[[custom_domains]]
+pattern = "www.loyorapay.com"
 
 [assets]
 directory = "."
